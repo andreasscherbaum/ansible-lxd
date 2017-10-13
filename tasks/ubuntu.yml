@@ -1,0 +1,136 @@
+---
+
+# for now fail if it's not an Ubuntu based system
+- name: Check OS (lxd)
+  fail: msg="Not an Ubuntu based system!"
+  when: ansible_distribution != 'Ubuntu'
+
+
+#- name: inventory_hostname
+#  debug: msg="{{ inventory_hostname }}"
+
+#- name: IP-Address
+#  debug: msg="{{ hostvars[inventory_hostname]['ansible_default_ipv4']['address'] }}"
+
+
+# install packages required for LXD
+- name: lxd packages
+  apt: name={{ item }} state=present
+  with_items:
+    - lxd
+    - lxd-client
+    - lxd-tools
+  notify:
+    - restart system
+    - waiting for server to come back after restart
+
+
+# figure out if LXD was configured before
+# if yes, there should be a line with "bridged" in the output
+- name: lxd configured?
+  shell: lxc profile show default
+  register: lxd_init
+  changed_when: False
+
+
+# LXD was not configured before
+# fake terminal input and run the init
+- name: lxd init
+  shell: echo -e "dir\nno\nyes\nyes\nlxdbr0\nauto\nnone\n" | lxd init
+  when: lxd_init.stdout.find("bridged") == -1
+
+
+# find out the IP address for the LXD interface
+- name: lxdbr0 IP address
+  shell: ip addr show lxdbr0 | grep "inet\b" | awk '{print $2}' | cut -d/ -f1
+  register: lxdbr0_ip_address
+  changed_when: false
+
+
+# fetch content of /etc/resolv.conf
+- name: /etc/resolv.conf content
+  shell: cat /etc/resolv.conf
+  register: resolv_conf
+  changed_when: false
+
+
+# if 'search lxd' is not present, remove all old nameserver lines for the lxdbr0 interface
+- name: /etc/resolv.conf update 1
+  lineinfile:
+    dest: /etc/resolv.conf
+    regexp: '^nameserver 10\.'
+    state: absent
+  when: resolv_conf.stdout.find('search lxd') == -1
+
+
+# if 'search lxd' is not present, remove all old nameserver lines for the lxdbr0 interface
+- name: /etc/resolv.conf update 2
+  lineinfile:
+    dest: /etc/resolv.conf
+    regexp: '^nameserver 192\.'
+    state: absent
+  when: resolv_conf.stdout.find('search lxd') == -1
+
+
+# if 'search lxd' is not present, add lxdbr0 ip address as new nameserver
+- name: /etc/resolv.conf update 3
+  lineinfile:
+    dest: /etc/resolv.conf
+    line: "nameserver {{ lxdbr0_ip_address.stdout }}"
+    insertafter: "# nameserver config"
+    state: present
+  when: resolv_conf.stdout.find('search lxd') == -1
+
+
+# finally add search for the lxd domain
+- name: /etc/resolv.conf update 4
+  lineinfile:
+    dest: /etc/resolv.conf
+    line: "search lxd"
+    state: present
+  when: resolv_conf.stdout.find('search lxd') == -1
+
+
+- name: Update /etc/network/interfaces
+  blockinfile:
+    dest: /etc/network/interfaces
+    insertafter: iface eth0 inet static
+    content: |
+      post-up /sbin/iptables --table nat -A POSTROUTING --source 10.0.0.0/8 -j MASQUERADE
+      pre-down /sbin/iptables --table nat -D POSTROUTING --source 10.0.0.0/8 -j MASQUERADE
+  register: network_interfaces
+
+
+- name: Start masquerading for eth0
+  shell: /sbin/iptables --table nat -A POSTROUTING --source 10.0.0.0/8 -j MASQUERADE
+  when: network_interfaces.changed
+
+
+# figure out the LXC version
+- name: LXC version
+  shell: lxc --version
+  register: lxc_version
+  changed_when: false
+
+
+- block:
+  # starting with LXC version 2.9 a concept of "storage pools" was introduced
+  - name: Check if container storage pool is created
+    shell: lxc storage list
+    register: lxc_storage_list
+    changed_when: false
+
+  - block:
+    - name: Create container storage pool
+      shell: lxc storage create container-pool dir
+
+    - name: Attach container storage pool to default profile
+      shell: lxc profile device add default root disk path=/ pool=container-pool
+
+    when: lxc_storage_list.stdout.find('container-pool') == -1
+
+  when: lxc_version.stdout | version_compare('2.9.0', operator='>=', strict=False)
+
+
+
+- meta: flush_handlers

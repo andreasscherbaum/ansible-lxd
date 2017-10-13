@@ -1,0 +1,13 @@
+---
+
+# Install host
+
+
+# for now fail if it's not an Ubuntu based system
+- name: Check OS (lxd - main)
+  fail: msg="Not an Ubuntu based system!"
+  when: ansible_distribution != 'Ubuntu'
+
+
+- name: Installation for Ubuntu
+  include: ubuntu.yml
