@@ -6,6 +6,16 @@
   when: ansible_distribution != 'Ubuntu'
 
 
+- name: check if /etc/network/interfaces is used (1)
+  stat: path=/etc/network/interfaces
+  register: network_interfaces_used
+
+
+- name: check if /etc/network/interfaces is used (2)
+  fail: msg="/etc/network/interfaces is not used"
+  when: network_interfaces_used.stat.exists != True
+
+
 #- name: inventory_hostname
 #  debug: msg="{{ inventory_hostname }}"
 
