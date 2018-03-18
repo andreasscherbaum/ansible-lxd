@@ -16,6 +16,16 @@
   when: network_interfaces_used.stat.exists != True
 
 
+- name: check if /etc/netplan/ is used (1)
+  stat: path=/etc/netplan
+  register: netplan_used
+
+
+- name: check if /etc/netplan/ is used (2)
+  fail: msg="/etc/netplan/ is used"
+  when: netplan_used.stat.exists == True
+
+
 #- name: inventory_hostname
 #  debug: msg="{{ inventory_hostname }}"
 
