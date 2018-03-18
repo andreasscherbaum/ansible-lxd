@@ -26,6 +26,15 @@
   when: netplan_used.stat.exists == True
 
 
+- name: Determine network interface name
+  set_fact:
+    main_interface: "{{ item }}"
+  with_items:
+    - "{{ hostvars[inventory_hostname]['ansible_interfaces'] }}"
+  when: item | match("^e[tn]")
+  changed_when: false
+
+
 #- name: inventory_hostname
 #  debug: msg="{{ inventory_hostname }}"
 
@@ -114,14 +123,14 @@
 - name: Update /etc/network/interfaces
   blockinfile:
     dest: /etc/network/interfaces
-    insertafter: iface eth0 inet static
+    insertafter: iface e[tn][a-z0-9]+ inet static
     content: |
       post-up /sbin/iptables --table nat -A POSTROUTING --source 10.0.0.0/8 -j MASQUERADE
       pre-down /sbin/iptables --table nat -D POSTROUTING --source 10.0.0.0/8 -j MASQUERADE
   register: network_interfaces
 
 
-- name: Start masquerading for eth0
+- name: Start masquerading for network interface
   shell: /sbin/iptables --table nat -A POSTROUTING --source 10.0.0.0/8 -j MASQUERADE
   when: network_interfaces.changed
 
