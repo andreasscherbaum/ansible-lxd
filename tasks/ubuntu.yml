@@ -16,14 +16,50 @@
   when: network_interfaces_used.stat.exists != True
 
 
-- name: check if /etc/netplan/ is used (1)
-  stat: path=/etc/netplan
-  register: netplan_used
+#- name: check if /etc/netplan/ is used (1)
+#  stat: path=/etc/netplan
+#  register: netplan_used
 
 
-- name: check if /etc/netplan/ is used (2)
-  fail: msg="/etc/netplan/ is used"
-  when: netplan_used.stat.exists == True
+#- name: check if /etc/netplan/ is used (2)
+#  fail: msg="/etc/netplan/ is used"
+#  when: netplan_used.stat.exists == True
+
+
+- name: check if networkd-dispatcher is used (1)
+  stat: path=/usr/lib/networkd-dispatcher/
+  register: networkd_dispatcher_used
+
+
+# basically the question is where to place the masquerade iptables command
+- name: Reset variables
+  set_fact:
+    iptables_use_network_interfaces: false
+    iptables_use_networkd_dispatcher: false
+
+
+- block:
+  - name: Use networkd-dispatcher
+    set_fact:
+      iptables_use_networkd_dispatcher: true
+
+  when: networkd_dispatcher_used.stat.exists == True and iptables_use_network_interfaces == False and iptables_use_networkd_dispatcher == False
+
+
+- block:
+  - name: Use /etc/network/interfaces
+    set_fact:
+      iptables_use_network_interfaces: true
+    # only use the /etc/network/interfaces when the size is bigger than just holding the "lo" interface
+    when: network_interfaces_used.stat.site > 150
+
+  when: network_interfaces_used.stat.exists == True and iptables_use_network_interfaces == False and iptables_use_networkd_dispatcher == False
+
+
+- name: Check if any interface method is used
+  fail:
+    msg: "Could not determine interface method"
+  when: iptables_use_network_interfaces == False and iptables_use_networkd_dispatcher == False
 
 
 - name: Determine network interface name
@@ -31,15 +67,15 @@
     main_interface: "{{ item }}"
   with_items:
     - "{{ hostvars[inventory_hostname]['ansible_interfaces'] }}"
-  when: item | match("^e[tn]")
+  when: item is match("^e[tn]")
   changed_when: false
 
 
-#- name: inventory_hostname
-#  debug: msg="{{ inventory_hostname }}"
+- name: inventory_hostname
+  debug: msg="{{ inventory_hostname }}"
 
-#- name: IP-Address
-#  debug: msg="{{ hostvars[inventory_hostname]['ansible_default_ipv4']['address'] }}"
+- name: IP-Address
+  debug: msg="{{ hostvars[inventory_hostname]['ansible_default_ipv4']['address'] }}"
 
 
 # install packages required for LXD
@@ -120,19 +156,53 @@
   when: resolv_conf.stdout.find('search lxd') == -1
 
 
-- name: Update /etc/network/interfaces
-  blockinfile:
-    dest: /etc/network/interfaces
-    insertafter: iface e[tn][a-z0-9]+ inet static
-    content: |
-      post-up /sbin/iptables --table nat -A POSTROUTING --source 10.0.0.0/8 -j MASQUERADE
-      pre-down /sbin/iptables --table nat -D POSTROUTING --source 10.0.0.0/8 -j MASQUERADE
-  register: network_interfaces
+#- fail: msg="Stop here"
 
 
-- name: Start masquerading for network interface
-  shell: /sbin/iptables --table nat -A POSTROUTING --source 10.0.0.0/8 -j MASQUERADE
-  when: network_interfaces.changed
+- block:
+  - name: Update /etc/network/interfaces
+    blockinfile:
+      dest: /etc/network/interfaces
+      insertafter: iface e[tn][a-z0-9]+ inet static
+      content: |
+        post-up /sbin/iptables --table nat -A POSTROUTING --source 10.0.0.0/8 -j MASQUERADE
+        pre-down /sbin/iptables --table nat -D POSTROUTING --source 10.0.0.0/8 -j MASQUERADE
+    register: network_interfaces
+
+
+  - name: Start masquerading for network interface
+    shell: /sbin/iptables --table nat -D POSTROUTING --source 10.0.0.0/8 -j MASQUERADE ; /sbin/iptables --table nat -A POSTROUTING --source 10.0.0.0/8 -j MASQUERADE
+    when: network_interfaces.changed
+
+  when: iptables_use_network_interfaces == True
+
+
+- block:
+  - name: if-up
+    copy:
+      src: '{{ role_path }}/files/if-up'
+      dest: /usr/lib/networkd-dispatcher/routable.d/masquerade-lxdbr0
+      owner: root
+      group: root
+      mode: 0644
+    register: networkd_dispatcher_1
+
+
+  - name: if-down
+    copy:
+      src: '{{ role_path }}/files/if-down'
+      dest: /usr/lib/networkd-dispatcher/off.d/masquerade-lxdbr0
+      owner: root
+      group: root
+      mode: 0644
+    register: networkd_dispatcher_2
+
+
+  - name: Start masquerading for network interface
+    shell: /sbin/iptables --table nat -D POSTROUTING --source 10.0.0.0/8 -j MASQUERADE ; /sbin/iptables --table nat -A POSTROUTING --source 10.0.0.0/8 -j MASQUERADE
+    when: networkd_dispatcher_1.changed or networkd_dispatcher_2.changed
+
+  when: iptables_use_networkd_dispatcher == True
 
 
 # figure out the LXC version
@@ -144,6 +214,7 @@
 
 - block:
   # starting with LXC version 2.9 a concept of "storage pools" was introduced
+  # in version 3.0 the storage pool is pre-crated, but uses 'btrfs' instead of 'dir'
   - name: Check if container storage pool is created
     shell: lxc storage list
     register: lxc_storage_list
@@ -153,12 +224,18 @@
     - name: Create container storage pool
       shell: lxc storage create container-pool dir
 
+
+    - name: Remove default storage pool
+      shell: lxc profile device remove default root
+      when: lxc_version.stdout is version_compare('3.0.0', operator='>=', strict=False)
+
+
     - name: Attach container storage pool to default profile
       shell: lxc profile device add default root disk path=/ pool=container-pool
 
     when: lxc_storage_list.stdout.find('container-pool') == -1
 
-  when: lxc_version.stdout | version_compare('2.9.0', operator='>=', strict=False)
+  when: lxc_version.stdout is version_compare('2.9.0', operator='>=', strict=False)
 
 
 

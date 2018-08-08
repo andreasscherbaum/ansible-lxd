@@ -1,0 +1,3 @@
+#!/bin/sh
+
+/sbin/iptables --table nat -D POSTROUTING --source 10.0.0.0/8 -j MASQUERADE ; /bin/true
