@@ -184,7 +184,7 @@
       dest: /usr/lib/networkd-dispatcher/routable.d/masquerade-lxdbr0
       owner: root
       group: root
-      mode: 0644
+      mode: 0755
     register: networkd_dispatcher_1
 
 
@@ -194,7 +194,7 @@
       dest: /usr/lib/networkd-dispatcher/off.d/masquerade-lxdbr0
       owner: root
       group: root
-      mode: 0644
+      mode: 0755
     register: networkd_dispatcher_2
 
 

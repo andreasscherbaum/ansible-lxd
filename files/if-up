@@ -1,3 +1,9 @@
-#!/bin/sh
+#!/bin/bash
 
-/sbin/iptables --table nat -A POSTROUTING --source 10.0.0.0/8 -j MASQUERADE
+# must be /bin/bash, for some reasons /bin/sh does not work
+
+if [ "$IFACE" == "lxdbr0" ];
+then
+    /sbin/iptables --table nat -D POSTROUTING --source 10.0.0.0/8 -j MASQUERADE ; /bin/true
+    /sbin/iptables --table nat -A POSTROUTING --source 10.0.0.0/8 -j MASQUERADE
+fi
