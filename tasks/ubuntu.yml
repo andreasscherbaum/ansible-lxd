@@ -51,7 +51,7 @@
     set_fact:
       iptables_use_network_interfaces: true
     # only use the /etc/network/interfaces when the size is bigger than just holding the "lo" interface
-    when: network_interfaces_used.stat.site > 150
+    when: network_interfaces_used.stat.size > 150
 
   when: network_interfaces_used.stat.exists == True and iptables_use_network_interfaces == False and iptables_use_networkd_dispatcher == False
 
