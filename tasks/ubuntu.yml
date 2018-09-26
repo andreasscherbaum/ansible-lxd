@@ -11,9 +11,9 @@
   register: network_interfaces_used
 
 
-- name: check if /etc/network/interfaces is used (2)
-  fail: msg="/etc/network/interfaces is not used"
-  when: network_interfaces_used.stat.exists != True
+#- name: check if /etc/network/interfaces is used (2)
+#  fail: msg="/etc/network/interfaces is not used"
+#  when: network_interfaces_used.stat.exists != True
 
 
 #- name: check if /etc/netplan/ is used (1)
