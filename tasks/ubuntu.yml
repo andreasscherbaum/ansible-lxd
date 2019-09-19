@@ -238,5 +238,17 @@
   when: lxc_version.stdout is version_compare('2.9.0', operator='>=', strict=False)
 
 
+# figure out DHCP expiry time
+- name: DHCP expiry time for lxdbr0
+  shell: lxc network get lxdbr0 ipv4.dhcp.expiry
+  register: dhcp_expiry_time_lxdbr0
+  changed_when: false
+
+
+# set DHCP expiry time to infinite
+- name: Set DHCP expiry time for lxdbr0
+  shell: lxc network set lxdbr0 ipv4.dhcp.expiry infinite
+  when: dhcp_expiry_time_lxdbr0.stdout.find('infinite') == -1
+
 
 - meta: flush_handlers
