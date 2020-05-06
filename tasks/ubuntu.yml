@@ -80,29 +80,86 @@
 
 # install packages required for LXD
 - name: lxd packages
-  apt: name={{ item }} state=present
-  with_items:
-    - lxd
-    - lxd-client
-    - lxd-tools
+  apt:
+    name:
+      - lxd
+      - lxd-client
+      - lxd-tools
+      - iptables
+    state: present
   notify:
     - restart system
     - waiting for server to come back after restart
 
 
-# figure out if LXD was configured before
-# if yes, there should be a line with "bridged" in the output
-- name: lxd configured?
-  shell: lxc profile show default
-  register: lxd_init
+# lxd version 3 and 4 differ in their configuration
+- name: find lxd version
+  shell: lxd --version
+  register: lxd_version
   changed_when: False
 
 
-# LXD was not configured before
-# fake terminal input and run the init
-- name: lxd init
-  shell: echo -e "dir\nno\nyes\nyes\nlxdbr0\nauto\nnone\n" | lxd init
-  when: lxd_init.stdout.find("bridged") == -1
+- block:
+  # figure out if LXD was configured before
+  # if yes, there should be a line with "bridged" in the output
+  - name: lxd configured?
+    shell: lxc profile show default
+    register: lxd_init
+    changed_when: False
+
+  # LXD was not configured before
+  # fake terminal input and run the init
+  - name: lxd init (v3)
+    shell: echo -e "dir\nno\nyes\nyes\nlxdbr0\nauto\nnone\n" | lxd init
+    when: lxd_init.stdout.find("bridged") == -1
+
+  when: lxd_version.stdout is version_compare('4', operator='<', strict=False)
+
+
+- block:
+  # figure out if LXD was configured before
+  # if yes, there should be a line with "container-pool" in the output
+  - name: lxd configured?
+    shell: lxc profile show default
+    register: lxd_init
+    changed_when: False
+
+  # LXD was not configured before
+  - block:
+    - name: Copy init.yml to the server
+      copy:
+        src: '{{ role_path }}/files/init.yml'
+        dest: '/root/init.yml'
+        owner: root
+        group: root
+        mode: 0500
+
+    # "no\nyes\n\ndir\nno\nyes\nlxdbr0\nauto\nnone\nno\nyes\nno\n"
+    - name: lxd init (v4)
+      shell: lxd init --preseed < /root/init.yml
+
+    - name: Remove init.yml
+      file:
+        dest: '/root/init.yml'
+        state: absent
+        
+    when: lxd_init.stdout.find("container-pool") == -1
+
+  when: lxd_version.stdout is version_compare('4', operator='>=', strict=False)
+
+## LXD was not configured before
+## fake terminal input and run the init
+#- block:
+#
+#  - name: lxd init (v3)
+#    shell: echo -e "dir\nno\nyes\nyes\nlxdbr0\nauto\nnone\n" | lxd init
+#    when: lxd_version.stdout is version_compare('4', operator='<', strict=False)
+#
+#  - name: lxd init (v4)
+#    shell: echo -e "no\nyes\n\ndir\nno\nyes\nlxdbr0\nauto\nnone\nno\nyes\nno\n" | lxd init
+#    when: lxd_version.stdout is version_compare('4', operator='>=', strict=False)
+#
+#  when: lxd_init.stdout.find("bridged") == -1
 
 
 # find out the IP address for the LXD interface
